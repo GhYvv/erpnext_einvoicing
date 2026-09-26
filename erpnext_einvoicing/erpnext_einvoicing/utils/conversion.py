@@ -39,16 +39,29 @@ def build_purchase_invoice(epurchase_invoice):
 	if epurchase_invoice.purchase_receipt:
 		pi.purchase_receipt = epurchase_invoice.purchase_receipt
 
+	# A received credit note becomes a debit note: ERPNext expects a return
+	# (is_return) with negative quantities and taxes, set before the insert.
+	sign = 1
+	if epurchase_invoice.is_credit_note:
+		sign = -1
+		pi.is_return = 1
+		if epurchase_invoice.referenced_epurchase_invoice:
+			pi.return_against = frappe.db.get_value(
+				"ePurchase Invoice",
+				epurchase_invoice.referenced_epurchase_invoice,
+				"purchase_invoice",
+			)
+
 	for item in epurchase_invoice.items:
 		pi.append(
 			"items",
 			{
 				"item_code": item.matched_item,
 				"item_name": item.item_description_raw,
-				"qty": item.qty,
+				"qty": sign * abs(item.qty or 0),
 				"uom": _resolve_uom(item.uom),
 				"rate": item.unit_price,
-				"amount": item.amount,
+				"amount": sign * abs(item.amount or 0),
 				"purchase_order": item.purchase_order or None,
 				"po_detail": item.po_detail or None,
 				"purchase_receipt": item.purchase_receipt or None,
@@ -57,21 +70,9 @@ def build_purchase_invoice(epurchase_invoice):
 			},
 		)
 
-	_build_taxes(epurchase_invoice, pi)
+	_build_taxes(epurchase_invoice, pi, sign)
 
 	pi.insert(ignore_permissions=True)
-
-	if epurchase_invoice.is_credit_note:
-		ref_pi = None
-		if epurchase_invoice.referenced_epurchase_invoice:
-			ref_pi = frappe.db.get_value(
-				"ePurchase Invoice",
-				epurchase_invoice.referenced_epurchase_invoice,
-				"purchase_invoice",
-			)
-		pi.is_return = 1
-		if ref_pi:
-			pi.return_against = ref_pi
 
 	epurchase_invoice.db_set("purchase_invoice", pi.name)
 
@@ -139,7 +140,7 @@ def _resolve_uom(uom_code):
 	return fallback
 
 
-def _build_taxes(epurchase_invoice, pi):
+def _build_taxes(epurchase_invoice, pi, sign=1):
 	"""Ajoute une ligne de taxe par compte distinct basé sur tax_account_head ou lookup par taux."""
 	tax_groups = {}
 	for item in epurchase_invoice.items:
@@ -163,7 +164,7 @@ def _build_taxes(epurchase_invoice, pi):
 		key = account
 		if key not in tax_groups:
 			tax_groups[key] = {"rate": rate, "base_amount": 0}
-		tax_groups[key]["base_amount"] += float(item.amount or 0)
+		tax_groups[key]["base_amount"] += sign * abs(float(item.amount or 0))
 
 	for account, data in tax_groups.items():
 		pi.append(
