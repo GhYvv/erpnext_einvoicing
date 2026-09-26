@@ -189,7 +189,9 @@ def _create_supplier_from_ethirdparty(ethirdparty_name):
 	supplier.supplier_group = frappe.db.get_single_value(
 		"Buying Settings", "supplier_group"
 	) or frappe.db.get_value("Supplier Group", {"is_group": 0}, "name")
-	supplier.tax_id = ethirdparty.siret
+	# erpnext_france keeps the VAT number in tax_id and SIRET/SIREN in their own fields
+	french_ids = frappe.get_meta("Supplier").has_field("siret")
+	supplier.tax_id = (ethirdparty.vat_number or None) if french_ids else ethirdparty.siret
 	mandatory_custom_fields = frappe.get_all(
 		"Custom Field",
 		filters={"dt": "Supplier", "reqd": 1},
@@ -199,6 +201,15 @@ def _create_supplier_from_ethirdparty(ethirdparty_name):
 		value = ethirdparty.get(fieldname)
 		if value:
 			supplier.set(fieldname, value)
+
+	if frappe.get_meta("Supplier").has_field("categorie_comptable_tiers") and not supplier.get(
+		"categorie_comptable_tiers"
+	):
+		from erpnext_einvoicing.erpnext_einvoicing.doctype.ethirdparty.ethirdparty import (
+			categorie_comptable_tiers,
+		)
+
+		supplier.categorie_comptable_tiers = categorie_comptable_tiers(ethirdparty.country_code)
 
 	if "erpnext_france" in frappe.get_installed_apps():
 		for fieldname in ("siret", "siren", "code_naf", "legal_form"):
