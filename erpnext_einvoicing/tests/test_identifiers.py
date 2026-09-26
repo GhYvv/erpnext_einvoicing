@@ -99,3 +99,27 @@ class TestIdentifiers(unittest.TestCase):
 		self.assertEqual(created.siret, siret)
 		self.assertEqual(created.tax_id, "FR77555123456")
 		self.assertEqual(created.categorie_comptable_tiers, "France")
+
+
+class TestCreditNoteTypes(unittest.TestCase):
+	"""Every credit note type of EN 16931 and of the French CIUS is a credit note."""
+
+	@classmethod
+	def setUpClass(cls):
+		TestIdentifiers.setUpClass()
+
+	def receive(self, type_code):
+		return create_e_purchase_invoice_from_xml(
+			cii_invoice(buyer_id=COMPANY_SIRET, seller_siret=SUPPLIER_SIRET, type_code=type_code),
+			{"flowId": frappe.generate_hash()},
+		)
+
+	def test_credit_note_types(self):
+		for type_code in ("381", "261", "262", "396", "502", "503"):
+			with self.subTest(type_code=type_code):
+				self.assertEqual(self.receive(type_code).is_credit_note, 1)
+
+	def test_invoice_types(self):
+		for type_code in ("380", "384", "389"):
+			with self.subTest(type_code=type_code):
+				self.assertEqual(self.receive(type_code).is_credit_note, 0)

@@ -55,6 +55,25 @@ def create_e_purchase_invoice_from_xml(xml_content, flow_data, pdf_content=None)
 	return _create_doc(data, xml_bytes, flow_data, pdf_content)
 
 
+# Credit note type codes (UNTDID 1001) of EN 16931, and those added by the
+# French CIUS (502: factored self-billed credit note, 503: prepayment credit note).
+CREDIT_NOTE_TYPE_CODES = {
+	"81",
+	"83",
+	"261",
+	"262",
+	"296",
+	"308",
+	"381",
+	"396",
+	"420",
+	"458",
+	"532",
+	"502",
+	"503",
+}
+
+
 ### XML extraction
 
 
@@ -122,7 +141,7 @@ def _parse_cii(xml_bytes: bytes):
 	### Header
 	invoice_number = get("//rsm:ExchangedDocument/ram:ID/text()")
 	type_code = get("//rsm:ExchangedDocument/ram:TypeCode/text()")
-	is_credit_note = type_code == "381"
+	is_credit_note = type_code in CREDIT_NOTE_TYPE_CODES
 	referenced_invoice_number = get(
 		"//rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeAgreement"
 		"/ram:BuyerOrderReferencedDocument/ram:IssuerAssignedID/text()"

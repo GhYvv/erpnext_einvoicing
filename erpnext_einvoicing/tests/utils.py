@@ -215,7 +215,13 @@ def make_epurchase_invoice(company, is_credit_note=0, referenced=None, qty=2, un
 
 
 def cii_invoice(
-	buyer_id, seller_siret, seller_siren="", seller_vat="", seller_name="Fournisseur SAS", number=None
+	buyer_id,
+	seller_siret,
+	seller_siren="",
+	seller_vat="",
+	seller_name="Fournisseur SAS",
+	number=None,
+	type_code="380",
 ):
 	"""A minimal Factur-X (CII) invoice, as a received flow carries it."""
 	number = number or frappe.generate_hash(length=10)
@@ -237,7 +243,7 @@ def cii_invoice(
 	xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
 	xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
 <rsm:ExchangedDocument>
-	<ram:ID>{number}</ram:ID><ram:TypeCode>380</ram:TypeCode>
+	<ram:ID>{number}</ram:ID><ram:TypeCode>{type_code}</ram:TypeCode>
 	<ram:IssueDateTime><udt:DateTimeString format="102">20260901</udt:DateTimeString></ram:IssueDateTime>
 </rsm:ExchangedDocument>
 <rsm:SupplyChainTradeTransaction>
