@@ -8,6 +8,7 @@ import frappe
 from frappe.utils import get_datetime
 
 from erpnext_einvoicing.providers.super_pdp_provider import SuperPdpProvider
+from erpnext_einvoicing.tests.utils import ensure_test_company, other_company
 
 PLATFORM = "SUPER PDP"
 
@@ -19,7 +20,8 @@ def utc(value):
 class FakePlatform(SuperPdpProvider):
 	"""The platform answers a search with the given flows; downloads are skipped."""
 
-	def __init__(self, flows, company="HCO"):
+	def __init__(self, flows, company=None):
+		company = company or ensure_test_company()
 		super().__init__(frappe.get_doc("Approved Platforms", PLATFORM), frappe._dict(name=company))
 		self.flows = flows
 		self.searches = []
@@ -51,7 +53,7 @@ class TestSyncCursor(unittest.TestCase):
 		frappe.clear_cache()
 		frappe.db.rollback()
 
-	def next_updated_after(self, company="HCO"):
+	def next_updated_after(self, company=None):
 		platform = FakePlatform([], company)
 		platform.sync_flows("Purchase Invoice")
 		return platform.searches[-1]["where"]["updatedAfter"]
@@ -70,3 +72,18 @@ class TestSyncCursor(unittest.TestCase):
 			[flow("f1", "2026-09-26T08:00:00.000Z"), flow("f2", "2026-09-26T08:05:00.000Z")]
 		).sync_flows("Purchase Invoice")
 		self.assertEqual(self.next_updated_after(), "2026-09-26T08:05:00.000Z")
+
+	def test_each_company_has_its_own_cursor(self):
+		"""Two companies on the same platform: one's sync must not move the other's cursor."""
+		first, second = ensure_test_company(), other_company()
+		FakePlatform([flow("f1", "2026-09-26T08:05:00.000Z")], first).sync_flows("Purchase Invoice")
+		self.assertEqual(self.next_updated_after(first), "2026-09-26T08:05:00.000Z")
+		self.assertEqual(self.next_updated_after(second), "1970-01-01T00:00:00.000Z")
+
+	def test_logs_without_company_are_the_fallback(self):
+		"""Logs written before the company was recorded: an upgrade must not read everything again."""
+		FakePlatform([flow("f1", "2026-09-26T08:05:00.000Z")]).sync_flows("Purchase Invoice")
+		frappe.db.sql(
+			"update `tabeInvoicing Sync Log` set company = NULL where approved_platform = %s", PLATFORM
+		)
+		self.assertEqual(self.next_updated_after(other_company()), "2026-09-26T08:05:00.000Z")

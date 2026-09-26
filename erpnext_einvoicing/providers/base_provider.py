@@ -310,6 +310,7 @@ class BaseProvider(ABC):
 		doc = frappe.new_doc("eInvoicing Sync Log")
 		doc.sync_type = sync_type
 		doc.approved_platform = self.platform.name
+		doc.company = self.company_doc.name
 		doc.last_sync_date = sync_date
 		doc.last_sync_status = status
 		doc.flows_total = total
@@ -319,16 +320,24 @@ class BaseProvider(ABC):
 		doc.insert(ignore_permissions=True)
 
 	def _build_search_payload(self, sync_type, limit=100):
-		last_sync_date = frappe.db.get_value(
-			"eInvoicing Sync Log",
-			filters={
-				"sync_type": sync_type,
-				"approved_platform": self.platform.name,
-				"last_sync_status": "ok",
-			},
-			fieldname="last_sync_date",
-			order_by="last_sync_date desc",
-		)
+		# One cursor per company: the platform credentials, hence the flows, are
+		# per company. Logs written before the company was recorded are the
+		# fallback, so that an upgrade does not read everything again.
+		last_sync_date = None
+		for company in (self.company_doc.name, ("is", "not set")):
+			last_sync_date = frappe.db.get_value(
+				"eInvoicing Sync Log",
+				filters={
+					"sync_type": sync_type,
+					"approved_platform": self.platform.name,
+					"company": company,
+					"last_sync_status": "ok",
+				},
+				fieldname="last_sync_date",
+				order_by="last_sync_date desc",
+			)
+			if last_sync_date:
+				break
 		updated_after = (
 			_system_to_utc(get_datetime(last_sync_date)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 			if last_sync_date
