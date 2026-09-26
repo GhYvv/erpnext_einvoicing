@@ -4,10 +4,11 @@
 import datetime
 from abc import ABC, abstractmethod
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 import frappe
 import requests
-from frappe.utils import add_to_date, get_datetime, now_datetime
+from frappe.utils import add_to_date, get_datetime, get_system_timezone, now_datetime
 
 LIFECYCLE_STATUS_MAP = {
 	"204": "Acknowledged",
@@ -31,6 +32,24 @@ FLOW_TYPE_MAP = {
 	"Purchase Invoice": "SupplierInvoice",
 	"Sales Invoice": "CustomerInvoice",
 }
+
+
+def _parse_utc(value):
+	"""An ISO 8601 timestamp from the platform, as an aware UTC datetime."""
+	parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+	if parsed.tzinfo is None:
+		parsed = parsed.replace(tzinfo=datetime.UTC)
+	return parsed.astimezone(datetime.UTC)
+
+
+def _utc_to_system(value):
+	"""Platform timestamp -> naive datetime in the system time zone, as Frappe stores it."""
+	return _parse_utc(value).astimezone(ZoneInfo(get_system_timezone())).replace(tzinfo=None)
+
+
+def _system_to_utc(value):
+	"""Naive datetime in the system time zone -> aware UTC datetime."""
+	return value.replace(tzinfo=ZoneInfo(get_system_timezone())).astimezone(datetime.UTC)
 
 
 class BaseProvider(ABC):
@@ -214,7 +233,11 @@ class BaseProvider(ABC):
 		)
 
 		synced = skipped = errors = 0
-		sync_date = now_datetime()
+		# The cursor follows the platform's clock: the latest `updatedAt` seen.
+		# Flows beyond the search limit, or updated during this sync, are
+		# then read next time; flows seen twice are skipped by flow_id.
+		updated = [f["updatedAt"] for f in flows if f.get("updatedAt")]
+		sync_date = _utc_to_system(max(updated, key=_parse_utc)) if updated else now_datetime()
 
 		for flow in flows:
 			flow_id = flow.get("flowId")
@@ -307,7 +330,7 @@ class BaseProvider(ABC):
 			order_by="last_sync_date desc",
 		)
 		updated_after = (
-			get_datetime(last_sync_date).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+			_system_to_utc(get_datetime(last_sync_date)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 			if last_sync_date
 			else "1970-01-01T00:00:00.000Z"
 		)
