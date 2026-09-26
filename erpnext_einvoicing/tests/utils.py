@@ -222,8 +222,15 @@ def cii_invoice(
 	seller_name="Fournisseur SAS",
 	number=None,
 	type_code="380",
+	lines=(("Service", 1, 100, 20),),
+	stated_vat=None,
+	grand_total=None,
 ):
-	"""A minimal Factur-X (CII) invoice, as a received flow carries it."""
+	"""A minimal Factur-X (CII) invoice, as a received flow carries it.
+
+	`lines`: (description, qty, unit price, VAT rate). The header VAT breakdown
+	is computed per rate, unless `stated_vat` ({rate: amount}) says otherwise.
+	"""
 	number = number or frappe.generate_hash(length=10)
 	siren = (
 		f'<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">{seller_siren}</ram:ID>'
@@ -237,6 +244,39 @@ def cii_invoice(
 		if seller_vat
 		else ""
 	)
+	bases = {}
+	items = ""
+	for description, qty, price, rate in lines:
+		amount = round(qty * price, 2)
+		bases[rate] = round(bases.get(rate, 0) + amount, 2)
+		items += f"""
+	<ram:IncludedSupplyChainTradeLineItem>
+		<ram:SpecifiedTradeProduct><ram:Name>{description}</ram:Name></ram:SpecifiedTradeProduct>
+		<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice>
+			<ram:ChargeAmount>{price:.2f}</ram:ChargeAmount>
+		</ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
+		<ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="C62">{qty}</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
+		<ram:SpecifiedLineTradeSettlement>
+			<ram:ApplicableTradeTax><ram:RateApplicablePercent>{rate}</ram:RateApplicablePercent></ram:ApplicableTradeTax>
+			<ram:SpecifiedTradeSettlementLineMonetarySummation>
+				<ram:LineTotalAmount>{amount:.2f}</ram:LineTotalAmount>
+			</ram:SpecifiedTradeSettlementLineMonetarySummation>
+		</ram:SpecifiedLineTradeSettlement>
+	</ram:IncludedSupplyChainTradeLineItem>"""
+	stated_vat = stated_vat or {}
+	taxes = ""
+	total_vat = 0
+	for rate, base in bases.items():
+		amount = stated_vat.get(rate, round(base * rate / 100, 2))
+		total_vat = round(total_vat + amount, 2)
+		taxes += f"""
+		<ram:ApplicableTradeTax>
+			<ram:CalculatedAmount>{amount:.2f}</ram:CalculatedAmount><ram:TypeCode>VAT</ram:TypeCode>
+			<ram:BasisAmount>{base:.2f}</ram:BasisAmount><ram:CategoryCode>S</ram:CategoryCode>
+			<ram:RateApplicablePercent>{rate}</ram:RateApplicablePercent>
+		</ram:ApplicableTradeTax>"""
+	total_ht = round(sum(bases.values()), 2)
+	grand_total = grand_total if grand_total is not None else round(total_ht + total_vat, 2)
 	return f"""<?xml version="1.0" encoding="UTF-8"?>
 <rsm:CrossIndustryInvoice
 	xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
@@ -246,20 +286,7 @@ def cii_invoice(
 	<ram:ID>{number}</ram:ID><ram:TypeCode>{type_code}</ram:TypeCode>
 	<ram:IssueDateTime><udt:DateTimeString format="102">20260901</udt:DateTimeString></ram:IssueDateTime>
 </rsm:ExchangedDocument>
-<rsm:SupplyChainTradeTransaction>
-	<ram:IncludedSupplyChainTradeLineItem>
-		<ram:SpecifiedTradeProduct><ram:Name>Service</ram:Name></ram:SpecifiedTradeProduct>
-		<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice>
-			<ram:ChargeAmount>100.00</ram:ChargeAmount>
-		</ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
-		<ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="C62">1</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
-		<ram:SpecifiedLineTradeSettlement>
-			<ram:ApplicableTradeTax><ram:RateApplicablePercent>20</ram:RateApplicablePercent></ram:ApplicableTradeTax>
-			<ram:SpecifiedTradeSettlementLineMonetarySummation>
-				<ram:LineTotalAmount>100.00</ram:LineTotalAmount>
-			</ram:SpecifiedTradeSettlementLineMonetarySummation>
-		</ram:SpecifiedLineTradeSettlement>
-	</ram:IncludedSupplyChainTradeLineItem>
+<rsm:SupplyChainTradeTransaction>{items}
 	<ram:ApplicableHeaderTradeAgreement>
 		<ram:SellerTradeParty>
 			<ram:GlobalID schemeID="0009">{seller_siret}</ram:GlobalID>
@@ -271,11 +298,11 @@ def cii_invoice(
 		</ram:BuyerTradeParty>
 	</ram:ApplicableHeaderTradeAgreement>
 	<ram:ApplicableHeaderTradeSettlement>
-		<ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
+		<ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>{taxes}
 		<ram:SpecifiedTradeSettlementHeaderMonetarySummation>
-			<ram:TaxBasisTotalAmount>100.00</ram:TaxBasisTotalAmount>
-			<ram:TaxTotalAmount currencyID="EUR">20.00</ram:TaxTotalAmount>
-			<ram:GrandTotalAmount>120.00</ram:GrandTotalAmount>
+			<ram:TaxBasisTotalAmount>{total_ht:.2f}</ram:TaxBasisTotalAmount>
+			<ram:TaxTotalAmount currencyID="EUR">{total_vat:.2f}</ram:TaxTotalAmount>
+			<ram:GrandTotalAmount>{grand_total:.2f}</ram:GrandTotalAmount>
 		</ram:SpecifiedTradeSettlementHeaderMonetarySummation>
 	</ram:ApplicableHeaderTradeSettlement>
 </rsm:SupplyChainTradeTransaction>

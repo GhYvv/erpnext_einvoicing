@@ -74,6 +74,28 @@ CREDIT_NOTE_TYPE_CODES = {
 }
 
 
+def stated_vat_by_rate(xml_content):
+	"""The VAT amounts stated in the invoice's header breakdown, as {rate: amount}."""
+	if not xml_content:
+		return {}
+	xml_bytes = xml_content.encode("utf-8") if isinstance(xml_content, str) else xml_content
+	try:
+		root = etree.fromstring(xml_bytes)
+	except etree.XMLSyntaxError:
+		return {}
+	stated = {}
+	for tax in root.xpath(
+		"//rsm:SupplyChainTradeTransaction/ram:ApplicableHeaderTradeSettlement/ram:ApplicableTradeTax",
+		namespaces=_CII_NS,
+	):
+		rate = tax.xpath("ram:RateApplicablePercent/text()", namespaces=_CII_NS)
+		amount = tax.xpath("ram:CalculatedAmount/text()", namespaces=_CII_NS)
+		if rate and amount:
+			key = round(_to_float(rate[0]), 2)
+			stated[key] = round(stated.get(key, 0) + _to_float(amount[0]), 2)
+	return stated
+
+
 ### XML extraction
 
 

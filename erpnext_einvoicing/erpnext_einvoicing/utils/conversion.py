@@ -75,6 +75,7 @@ def build_purchase_invoice(epurchase_invoice):
 	_build_taxes(epurchase_invoice, pi, sign)
 
 	pi.insert(ignore_permissions=True)
+	_check_total(epurchase_invoice, pi)
 
 	epurchase_invoice.db_set("purchase_invoice", pi.name)
 
@@ -143,30 +144,49 @@ def _resolve_uom(uom_code):
 
 
 def _build_taxes(epurchase_invoice, pi, sign=1):
-	"""Ajoute une ligne de taxe par compte distinct basé sur tax_account_head ou lookup par taux."""
-	tax_groups = {}
+	"""One tax line per tax account, with the VAT stated on the received invoice.
+
+	The supplier's invoice grounds the VAT deduction: its amounts are used as
+	they are (recomputed only when the invoice states none), and a rate with
+	no tax account stops the conversion instead of being dropped.
+	"""
+	from erpnext_einvoicing.erpnext_einvoicing.utils.facturx import stated_vat_by_rate
+
+	bases, accounts = {}, {}
 	for item in epurchase_invoice.items:
 		if not item.tax_rate:
 			continue
-		rate = round(float(item.tax_rate), 1)
-		account = item.get("tax_account_head") or None
-		if not account:
-			account = frappe.db.get_value(
-				"Account",
-				{
-					"company": pi.company,
-					"account_type": "Tax",
-					"tax_rate": rate,
-					"root_type": "Asset",
-				},
-				"name",
-			)
-		if not account:
-			continue
-		key = account
-		if key not in tax_groups:
-			tax_groups[key] = {"rate": rate, "base_amount": 0}
-		tax_groups[key]["base_amount"] += sign * abs(float(item.amount or 0))
+		rate = round(float(item.tax_rate), 2)
+		bases[rate] = bases.get(rate, 0) + abs(float(item.amount or 0))
+		account = item.get("tax_account_head") or frappe.db.get_value(
+			"Account",
+			{
+				"company": pi.company,
+				"account_type": "Tax",
+				"tax_rate": rate,
+				"root_type": "Asset",
+			},
+			"name",
+		)
+		if account:
+			accounts.setdefault(rate, account)
+
+	missing = [rate for rate in bases if not accounts.get(rate)]
+	if missing:
+		frappe.throw(
+			frappe._(
+				"No tax account for the VAT rate(s) {0}: set one on the lines before converting."
+			).format(", ".join(f"{rate:g}%" for rate in missing)),
+			title=frappe._("Missing Tax Account"),
+		)
+
+	stated = stated_vat_by_rate(epurchase_invoice.xml_content)
+	tax_groups = {}
+	for rate, base in bases.items():
+		amount = stated[rate] if rate in stated else round(base * rate / 100, 2)
+		group = tax_groups.setdefault(accounts[rate], {"rates": [], "amount": 0})
+		group["rates"].append(rate)
+		group["amount"] += amount
 
 	for account, data in tax_groups.items():
 		pi.append(
@@ -174,9 +194,21 @@ def _build_taxes(epurchase_invoice, pi, sign=1):
 			{
 				"charge_type": "Actual",
 				"account_head": account,
-				"description": f"TVA {data['rate']}%",
-				"tax_amount": round(data["base_amount"] * data["rate"] / 100, 2),
+				"description": "TVA " + ", ".join(f"{rate:g}%" for rate in data["rates"]),
+				"tax_amount": sign * round(data["amount"], 2),
 			},
+		)
+
+
+def _check_total(epurchase_invoice, pi):
+	"""The purchase invoice must total what the received invoice says."""
+	expected = abs(float(epurchase_invoice.total_ttc or 0))
+	if expected and abs(abs(float(pi.grand_total or 0)) - expected) > 0.01:
+		frappe.throw(
+			frappe._("The purchase invoice totals {0}, the received invoice {1}.").format(
+				abs(float(pi.grand_total or 0)), expected
+			),
+			title=frappe._("Totals Differ"),
 		)
 
 
