@@ -545,8 +545,10 @@ def rematch_supplier(name):
 	siret = (doc.supplier_siret or "").replace(" ", "")
 	name_raw = doc.supplier_name_raw or ""
 
-	if siret:
-		supplier = frappe.db.get_value("Supplier", {"tax_id": siret}, "name")
+	if siret or doc.supplier_siren:
+		from erpnext_einvoicing.erpnext_einvoicing.utils.identifiers import find_supplier
+
+		supplier = find_supplier(siret, doc.supplier_siren)
 		if supplier:
 			doc.db_set("matched_supplier", supplier)
 			doc.db_set("supplier_match_status", "matched")

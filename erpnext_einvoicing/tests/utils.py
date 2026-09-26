@@ -68,6 +68,24 @@ def ensure_test_company():
 	return company
 
 
+def other_company(name="eInvoicing Other SAS", abbr="EIO"):
+	"""A second French company, for multi-company cases."""
+	if not frappe.db.exists("Company", name):
+		frappe.get_doc(
+			{
+				"doctype": "Company",
+				"company_name": name,
+				"abbr": abbr,
+				"country": "France",
+				"default_currency": "EUR",
+				"create_chart_of_accounts_based_on": "Standard Template",
+				"chart_of_accounts": CHART,
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.commit()
+	return name
+
+
 def _ensure_fiscal_year(company):
 	year = now_datetime().year
 	start, end = f"{year}-01-01", f"{year}-12-31"
@@ -194,3 +212,65 @@ def make_epurchase_invoice(company, is_credit_note=0, referenced=None, qty=2, un
 			],
 		}
 	).insert(ignore_permissions=True)
+
+
+def cii_invoice(
+	buyer_id, seller_siret, seller_siren="", seller_vat="", seller_name="Fournisseur SAS", number=None
+):
+	"""A minimal Factur-X (CII) invoice, as a received flow carries it."""
+	number = number or frappe.generate_hash(length=10)
+	siren = (
+		f'<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">{seller_siren}</ram:ID>'
+		"</ram:SpecifiedLegalOrganization>"
+		if seller_siren
+		else ""
+	)
+	vat = (
+		f'<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">{seller_vat}</ram:ID>'
+		"</ram:SpecifiedTaxRegistration>"
+		if seller_vat
+		else ""
+	)
+	return f"""<?xml version="1.0" encoding="UTF-8"?>
+<rsm:CrossIndustryInvoice
+	xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
+	xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
+	xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
+<rsm:ExchangedDocument>
+	<ram:ID>{number}</ram:ID><ram:TypeCode>380</ram:TypeCode>
+	<ram:IssueDateTime><udt:DateTimeString format="102">20260901</udt:DateTimeString></ram:IssueDateTime>
+</rsm:ExchangedDocument>
+<rsm:SupplyChainTradeTransaction>
+	<ram:IncludedSupplyChainTradeLineItem>
+		<ram:SpecifiedTradeProduct><ram:Name>Service</ram:Name></ram:SpecifiedTradeProduct>
+		<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice>
+			<ram:ChargeAmount>100.00</ram:ChargeAmount>
+		</ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement>
+		<ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="C62">1</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
+		<ram:SpecifiedLineTradeSettlement>
+			<ram:ApplicableTradeTax><ram:RateApplicablePercent>20</ram:RateApplicablePercent></ram:ApplicableTradeTax>
+			<ram:SpecifiedTradeSettlementLineMonetarySummation>
+				<ram:LineTotalAmount>100.00</ram:LineTotalAmount>
+			</ram:SpecifiedTradeSettlementLineMonetarySummation>
+		</ram:SpecifiedLineTradeSettlement>
+	</ram:IncludedSupplyChainTradeLineItem>
+	<ram:ApplicableHeaderTradeAgreement>
+		<ram:SellerTradeParty>
+			<ram:GlobalID schemeID="0009">{seller_siret}</ram:GlobalID>
+			<ram:Name>{seller_name}</ram:Name>{siren}{vat}
+		</ram:SellerTradeParty>
+		<ram:BuyerTradeParty>
+			<ram:Name>Acheteur</ram:Name>
+			<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">{buyer_id}</ram:ID></ram:SpecifiedLegalOrganization>
+		</ram:BuyerTradeParty>
+	</ram:ApplicableHeaderTradeAgreement>
+	<ram:ApplicableHeaderTradeSettlement>
+		<ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
+		<ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+			<ram:TaxBasisTotalAmount>100.00</ram:TaxBasisTotalAmount>
+			<ram:TaxTotalAmount currencyID="EUR">20.00</ram:TaxTotalAmount>
+			<ram:GrandTotalAmount>120.00</ram:GrandTotalAmount>
+		</ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+	</ram:ApplicableHeaderTradeSettlement>
+</rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>"""

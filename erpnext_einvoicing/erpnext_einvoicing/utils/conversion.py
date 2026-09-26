@@ -4,6 +4,8 @@
 import frappe
 from frappe.utils.file_manager import save_file
 
+from erpnext_einvoicing.erpnext_einvoicing.utils.identifiers import find_supplier
+
 
 def build_purchase_invoice(epurchase_invoice):
 	"""
@@ -209,7 +211,7 @@ def _create_supplier_from_ethirdparty(ethirdparty_name):
 	if ethirdparty.city:
 		supplier.city = ethirdparty.city
 
-	existing = frappe.db.get_value("Supplier", {"tax_id": ethirdparty.siret}, "name") or frappe.db.get_value(
+	existing = find_supplier(ethirdparty.siret, ethirdparty.siren) or frappe.db.get_value(
 		"Supplier", {"supplier_name": ethirdparty.party_name}, "name"
 	)
 	if existing:

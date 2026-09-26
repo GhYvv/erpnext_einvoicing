@@ -9,6 +9,8 @@ import frappe
 from frappe.utils.file_manager import save_file
 from lxml import etree
 
+from erpnext_einvoicing.erpnext_einvoicing.utils.identifiers import find_company, find_supplier
+
 ### Constants
 
 _CII_NAMESPACE = "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
@@ -272,7 +274,7 @@ def _create_doc(data: dict, xml_bytes: bytes, flow_data: dict, pdf_content=None)
 	buyer_siret = data.get("buyer_siret", "")
 	doc.buyer_siret = buyer_siret
 	if buyer_siret:
-		company = frappe.db.get_value("Company", {"tax_id": buyer_siret}, "name")
+		company = find_company(buyer_siret)
 		if company:
 			doc.company = company
 
@@ -312,7 +314,7 @@ def _create_doc(data: dict, xml_bytes: bytes, flow_data: dict, pdf_content=None)
 def _auto_match_supplier(doc, data: dict):
 	"""
 	Priority:
-	1. Existing Supplier by SIRET (tax_id)
+	1. Existing Supplier by SIRET, then SIREN
 	2. Existing Supplier by name
 	3. Existing eThirdParty by SIRET
 	4. Create eThirdParty in pending
@@ -321,20 +323,12 @@ def _auto_match_supplier(doc, data: dict):
 	siren = data.get("supplier_siren", "").replace(" ", "")
 	name_raw = data.get("supplier_name_raw", "")
 
-	### 1. Existing Supplier by SIRET
-	if siret:
-		supplier = frappe.db.get_value("Supplier", {"tax_id": siret}, "name")
-		if supplier:
-			doc.db_set("matched_supplier", supplier)
-			doc.db_set("supplier_match_status", "matched")
-			return
-
-	if siren:
-		supplier = frappe.db.get_value("Supplier", {"tax_id": siren}, "name")
-		if supplier:
-			doc.db_set("matched_supplier", supplier)
-			doc.db_set("supplier_match_status", "matched")
-			return
+	### 1. Existing Supplier by SIRET, then SIREN
+	supplier = find_supplier(siret, siren)
+	if supplier:
+		doc.db_set("matched_supplier", supplier)
+		doc.db_set("supplier_match_status", "matched")
+		return
 
 	### 2. Existing Supplier by name
 	if name_raw:
